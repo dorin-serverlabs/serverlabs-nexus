@@ -1,0 +1,27 @@
+apiVersion: nexus.serverlabs.ai/v1alpha2
+kind: InferenceAppliance
+metadata:
+  name: qwen-2-5-72b-appliance-awq
+  location: bacau-lab-rack-01
+spec:
+  engine: vllm
+  model: Qwen/Qwen2.5-72B-Instruct-AWQ
+  quantization: awq_marlin
+  resources:
+    accelerator: nvidia-rtx-pro-6000-96gb
+    tensorParallel: 2
+    minPcieLanes: 16
+    requiredVramPerGpuGb: 48
+    availableVramPerGpuGb: 96
+    kvCacheDtype: fp8_e4m3
+    maxModelLen: 32768
+  bmcTelemetry:
+    protocol: redfish
+    thermalThrottleThresholdC: 84
+    maxChassisPowerWatts: 2400
+  hybridBurst:
+    enabled: true
+    provider: azure-openai
+    region: swedencentral
+    kvSaturationThreshold: 0.88
+    fallbackEndpoint: https://serverlabs-eu-burst.openai.azure.com/openai/deployments/gpt-4o
