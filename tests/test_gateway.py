@@ -13,7 +13,9 @@ from nexus.gateway import (
     PrefixAffinityRouter,
 )
 from nexus.operator import (
+    PcieLinkStatus,
     RedfishBmcClient,
+    find_cross_numa_tp_groups,
     inspect_pcie_topology,
     load_appliance_profile,
     parse_nvidia_smi_csv,
@@ -139,3 +141,35 @@ def test_commissioning_benchmark_signature_and_cli(capsys):
     out = json.loads(capsys.readouterr().out)
     assert out["serial_number"] == "SL-RO-2026-0199"
     assert len(out["sha256_signature"]) == 64
+
+
+def test_cross_numa_tp_detection_and_cli_diag(tmp_path: Path, capsys):
+    for idx, (bdf, numa) in enumerate([("0000_21_00.0", "0"), ("0000_a1_00.0", "1")]):
+        d = tmp_path / bdf
+        d.mkdir()
+        (d / "vendor").write_text("0x10de\n")
+        (d / "device").write_text("0x2684\n")
+        (d / "current_link_width").write_text("16\n")
+        (d / "max_link_width").write_text("16\n")
+        (d / "current_link_speed").write_text("32.0 GT/s PCIe\n")
+        (d / "max_link_speed").write_text("32.0 GT/s PCIe\n")
+        (d / "numa_node").write_text(f"{numa}\n")
+
+    links = inspect_pcie_topology(str(tmp_path))
+    warnings = find_cross_numa_tp_groups(links, tensor_parallel=2)
+    assert len(warnings) == 1
+    assert warnings[0]["warning"] == "WARN_CROSS_NUMA_TP"
+    assert warnings[0]["numa_nodes"] == [0, 1]
+
+    rc = cli_main(["diag", "--sysfs-root", str(tmp_path), "--tensor-parallel", "2"])
+    assert rc == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["status"] == "WARN_CROSS_NUMA_TP"
+    assert len(report["cross_numa_warnings"]) == 1
+
+    # Single-socket placement passes cleanly
+    same_socket = [
+        PcieLinkStatus(bdf="0000:21:00.0", current_speed_gt=32.0, max_speed_gt=32.0, current_width=16, max_width=16, numa_node=0),
+        PcieLinkStatus(bdf="0000:41:00.0", current_speed_gt=32.0, max_speed_gt=32.0, current_width=16, max_width=16, numa_node=0),
+    ]
+    assert find_cross_numa_tp_groups(same_socket, tensor_parallel=2) == []

@@ -126,6 +126,33 @@ def inspect_pcie_topology(sysfs_root: str = "/sys/bus/pci/devices") -> List[Pcie
     return results
 
 
+def find_cross_numa_tp_groups(
+    links: List[PcieLinkStatus], tensor_parallel: int = 2
+) -> List[Dict[str, Any]]:
+    """Detect tensor-parallel GPU groups that span multiple Linux NUMA sockets.
+
+    When tensorParallel >= 2 spans Socket 0 and Socket 1 without NVLink bridging,
+    cross-QPI/UPI all-reduce traffic adds substantial tail latency during burn-in.
+    """
+    if tensor_parallel < 2 or len(links) < tensor_parallel:
+        return []
+    warnings: List[Dict[str, Any]] = []
+    for start in range(0, len(links) - (len(links) % tensor_parallel), tensor_parallel):
+        group = links[start : start + tensor_parallel]
+        nodes = sorted({g.numa_node for g in group if g.numa_node >= 0})
+        if len(nodes) > 1:
+            warnings.append(
+                {
+                    "group_index": start // tensor_parallel,
+                    "tensor_parallel": tensor_parallel,
+                    "bdfs": [g.bdf for g in group],
+                    "numa_nodes": nodes,
+                    "warning": "WARN_CROSS_NUMA_TP",
+                }
+            )
+    return warnings
+
+
 def parse_nvidia_smi_csv(csv_text: str) -> List[GpuDeviceNode]:
     """Parse nvidia-smi CSV output into validated GpuDeviceNode entries."""
     nodes: List[GpuDeviceNode] = []

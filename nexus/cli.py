@@ -9,6 +9,7 @@ from typing import List, Optional
 from nexus import __version__
 from nexus.gateway import CommissioningBenchmark
 from nexus.operator import (
+    find_cross_numa_tp_groups,
     inspect_pcie_topology,
     load_appliance_profile,
     query_local_gpus,
@@ -19,18 +20,26 @@ def cmd_diag(args: argparse.Namespace) -> int:
     links = inspect_pcie_topology(args.sysfs_root)
     gpus = query_local_gpus()
     degraded = [l.bdf for l in links if l.is_width_degraded or l.is_speed_degraded]
+    cross_numa = find_cross_numa_tp_groups(links, tensor_parallel=args.tensor_parallel)
+    if degraded:
+        status = "WARN_PCIE_DEGRADED"
+    elif cross_numa:
+        status = "WARN_CROSS_NUMA_TP"
+    else:
+        status = "PASS"
     report = {
         "nexus_version": __version__,
         "sysfs_root": args.sysfs_root,
         "pcie_accelerators_detected": len(links),
         "nvml_gpus_detected": len(gpus),
         "degraded_pcie_links": degraded,
+        "cross_numa_warnings": cross_numa,
         "pcie_topology": [l.model_dump() for l in links],
         "gpus": [g.model_dump() for g in gpus],
-        "status": "WARN_PCIE_DEGRADED" if degraded else "PASS",
+        "status": status,
     }
     print(json.dumps(report, indent=2))
-    return 1 if degraded else 0
+    return 1 if (degraded or cross_numa) else 0
 
 
 def cmd_deploy(args: argparse.Namespace) -> int:
@@ -84,6 +93,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     p_diag = sub.add_parser("diag", help="Inspect PCIe link width/speed, NUMA affinity, and GPU thermals")
     p_diag.add_argument("--sysfs-root", default="/sys/bus/pci/devices", help="Path to Linux PCI sysfs directory")
+    p_diag.add_argument("--tensor-parallel", type=int, default=1, help="Target tensor-parallel group size for NUMA locality check")
     p_diag.set_defaults(func=cmd_diag)
 
     p_deploy = sub.add_parser("deploy", help="Validate and render an InferenceAppliance YAML profile")
